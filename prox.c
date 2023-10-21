@@ -22,7 +22,7 @@ int main(void)
 
     // Your initialisations here
     messagebus_init(&bus, &bus_lock, &bus_condvar);
-    proximity_start();
+    proximity_start(FAST_UPDATE);
     calibrate_ir();
 
     //UART1

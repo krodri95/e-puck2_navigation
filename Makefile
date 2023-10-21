@@ -9,7 +9,7 @@ PROJECT = team2I-A1
 GLOBAL_PATH = ../e-puck2_main-processor
 
 #Source files to include
-CSRC += ./main.c \
+CSRC += ./follower.c \
 
 #Header folders to include
 INCDIR += 

@@ -22,13 +22,13 @@ int main(void)
     clear_leds();
     spi_comm_start();
 
-    set_body_led(1);
-    set_front_led(1);
+    //set_body_led(1);
+    //set_front_led(1);
 
     /* Infinite loop. */
     while (1) {
     	//waits 1 second
-        chThdSleepMilliseconds(400);
+        chThdSleepMilliseconds(500);
 
         /* 
         led_name_t led_number, unsigned int value
@@ -42,6 +42,21 @@ int main(void)
         */
         set_led(LED5, 1); //0 for off, 1 for on, or 2 to toggle
 
+        //waits 1 second
+        chThdSleepMilliseconds(500);
+
+        /* 
+        led_name_t led_number, unsigned int value
+        typedef enum {
+                LED1,
+                LED3,
+                LED5,
+                LED7,
+                NUM_LED,
+        } led_name_t;
+        */
+        set_led(LED5, 0); //0 for off, 1 for on, or 2 to toggle
+
         /*
         rgb_led_name_t led_number, int red_val, int green_val, int blue_val
         typedef enum {
@@ -52,8 +67,8 @@ int main(void)
                 NUM_RGB_LED,
         } rgb_led_name_t;
         */
-        set_rgb_led(LED3, 255, 255, 0);
-        set_rgb_led(LED7, 255, 0, 255);
+        set_rgb_led(LED2, 255, 255, 0);
+        set_rgb_led(LED8, 255, 0, 255);
 
     }
 }

@@ -52,7 +52,7 @@ int main(void)
         distance = dSum/N;
         //}
 
-        motor_speed = (distance >= 800) ? 500 : (5*distance-500)/7; // y = mx + c; threshold is 100mm
+        motor_speed = (distance >= 300) ? 1000 : (5*distance-500); // y = mx + c; threshold is 100mm
 
         left_motor_set_speed(motor_speed);
         right_motor_set_speed(motor_speed);
