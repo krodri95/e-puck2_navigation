@@ -26,11 +26,10 @@
 #define SPEED_FACTOR 0.5
 
 //Thresholds
-#define SCAN_THR 150 //15?cm
+#define ESC_THR 150 //15?cm
 #define TARGET_THR 60 //4.0cm
 #define COLLISION_THR 40 //2.0cm
 #define PRX_NOISE_THR 100
-#define OSC_THR 150
 
 messagebus_t bus;
 MUTEX_DECL(bus_lock);
@@ -73,32 +72,7 @@ void motor_move_bw(void) {
     right_motor_set_speed(-MOTOR_SPEED_LIMIT*SPEED_FACTOR);
 }
 
-void motor_move(void) {
-
-    uint16_t dist = find_distance();
-
-    if(dist > TARGET_THR) {
-        // move forward
-        motor_move_fw();
-     } else if (dist < COLLISION_THR) {
-         // move backward
-         motor_move_bw();
-    } else {
-        // stop moving
-        motor_stop();
-    }
-}
-
-void target_found(void) {
-    // light the leds yellow
-    set_rgb_led(LED2, 10, 10, 0);
-    set_rgb_led(LED4, 10, 10, 0);
-    set_rgb_led(LED6, 10, 10, 0);
-    set_rgb_led(LED8, 10, 10, 0);
-
-}
-
-void target_locked(void) {
+void robot_moving(void) {
     // light the leds green
     set_rgb_led(LED2, 0, 10, 0);
     set_rgb_led(LED4, 0, 10, 0);
@@ -107,16 +81,42 @@ void target_locked(void) {
 
 }
 
-void target_lost(void) {
+void robot_turning(void) {
     // light the leds red
     set_rgb_led(LED2, 10, 0, 0);
     set_rgb_led(LED4, 10, 0, 0);
     set_rgb_led(LED6, 10, 0, 0);
     set_rgb_led(LED8, 10, 0, 0);
 
-    // start rotating clockwise
-    left_motor_set_speed(SCAN_SPEED);
-    right_motor_set_speed(-SCAN_SPEED);
+}
+
+void robot_stopped(void) {
+    // light the leds green
+    set_rgb_led(LED2, 10, 10, 0);
+    set_rgb_led(LED4, 10, 10, 0);
+    set_rgb_led(LED6, 10, 10, 0);
+    set_rgb_led(LED8, 10, 10, 0);
+
+}
+
+void motor_move(void) {
+
+    uint16_t dist = find_distance();
+
+    if(dist > TARGET_THR) {
+        // move forward
+        robot_moving();
+        motor_move_fw();
+    }
+    //  else if (dist < COLLISION_THR) {
+    //      // move backward
+    //      motor_move_bw();
+    // }
+    else {
+        // stop moving
+        robot_stopped();
+        motor_stop();
+    }
 }
 
 void get_prox_readings(int *prox, unsigned int *mIdx) {
@@ -148,13 +148,19 @@ void get_prox_readings(int *prox, unsigned int *mIdx) {
 
 }
 
-void scan_target(uint16_t dist) {
+void escape(uint16_t dist) {
     //scan
-    target_lost();
-    while(dist > SCAN_THR) {
+    robot_turning();
+    // start rotating clockwise
+    left_motor_set_speed(SCAN_SPEED);
+    right_motor_set_speed(-SCAN_SPEED);
+
+    while(dist < ESC_THR) {
         dist = find_distance();
     }
-    target_found();
+    //escape found
+    robot_moving();
+    motor_move_fw();
 }
 
 int main(void)
@@ -185,7 +191,7 @@ int main(void)
     char str[100];
     int str_length;
 
-    uint16_t distance = 0, sum_sensors = 0;
+    uint16_t distance = 0, sum_sensors_x = 0, sum_sensors_y = 0;
     int left_speed, right_speed;
     int prox[PROXIMITY_NB_CHANNELS];
     unsigned int max_idx;
@@ -194,40 +200,21 @@ int main(void)
     while (1) {
 
         distance = find_distance();
-        // find the target
-        if (distance > SCAN_THR) {
-            scan_target(distance);
-        }
 
-        // move towards or away from the target
+        // explore
         motor_move();
-        distance = find_distance();
-
-        // in case target changes position
-        if (distance > SCAN_THR) {
-            scan_target(distance);
-            // move towards or away from the target
-            motor_move();
-        }
-
-        // approaching the target
-        distance = find_distance();
-
-        if(distance < TARGET_THR) {
-            // target in range
-            target_locked();
-            motor_move();
-        }
 
         // Consider small values to be noise thus set them to zero.
         get_prox_readings(prox, &max_idx);
 
         // The following table shows the weights of all the proximity sensors for the resulting rotation.
         //  Prox	0		1		2		3		4		5		6		7
-        //	w		-0.25	-0.5	-1		-1		1	    1       0.5 	0.25
+        //	x		-0.5	-0.25	0		0		0	    0       -0.25 	-0.5
+        //	y		1.0	    0.5	    0.25	0		0	    -0.25   -0.5 	-1.0
 
         // Sum the contribution of each sensor (based on the previous weights table).
-        sum_sensors = -(prox[0]>>2) - (prox[1]>>1) - prox[2] - prox[3] + prox[4] + prox[5] + (prox[6]>>1) + (prox[7]>>2);
+        sum_sensors_x = -(prox[0]>>1) - (prox[1]>>2) + prox[2]*0 + prox[3]*0 + prox[4]*0 + prox[5]*0 - (prox[6]>>4) - (prox[7]>>1);
+        sum_sensors_y = prox[0] + (prox[1]>>1) + (prox[2]>>2) + prox[3]*0 - prox[4]*0 - (prox[5]>>2) - (prox[6]>>1) - prox[7];
 
         motor_move();
 
@@ -235,8 +222,8 @@ int main(void)
         left_speed = left_motor_get_desired_speed();
         right_speed = right_motor_get_desired_speed();
 
-        left_speed -= (sum_sensors<<1);
-        right_speed += ((sum_sensors<<1));
+        left_speed += ((sum_sensors_x>>1) - (sum_sensors_y<<1));
+        right_speed += ((sum_sensors_x>>1) + (sum_sensors_y<<1));
 
         //check bounds
         left_speed = (left_speed < -MOTOR_SPEED_LIMIT*SPEED_FACTOR) ? -MOTOR_SPEED_LIMIT*SPEED_FACTOR : left_speed;
@@ -245,16 +232,15 @@ int main(void)
         right_speed = (right_speed < -MOTOR_SPEED_LIMIT*SPEED_FACTOR) ? -MOTOR_SPEED_LIMIT*SPEED_FACTOR : right_speed;
         right_speed = (right_speed > MOTOR_SPEED_LIMIT*SPEED_FACTOR) ? MOTOR_SPEED_LIMIT*SPEED_FACTOR : right_speed;
 
-        if(distance < SCAN_THR){
-            motor_stop();
-        }
-        else {
+        distance = find_distance();
+
+        if(distance < TARGET_THR || max_idx == 1 || max_idx == 6){
             left_motor_set_speed(left_speed);
             right_motor_set_speed(right_speed);
         }
 
-        str_length = sprintf(str, "distance,%d, prox,%d,%d,%d,%d,%d,%d,%d,%d, motor_speeds,%d,%d\n",distance,prox[0],prox[1],prox[2],
-                             prox[3],prox[4],prox[5],prox[6],prox[7], left_motor_get_desired_speed(), right_motor_get_desired_speed());
+        str_length = sprintf(str, "distance,%d, prox,%d,%d,%d,%d,%d,%d,%d,%d, motor_speeds,%d,%d, max_idx,%d\n",distance,prox[0],prox[1],prox[2],
+                             prox[3],prox[4],prox[5],prox[6],prox[7], left_motor_get_desired_speed(), right_motor_get_desired_speed(), max_idx);
         e_send_uart1_char(str, str_length);
 
         // waits 20 milliseconds
