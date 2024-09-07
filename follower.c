@@ -20,16 +20,21 @@
 #include "sensors/VL53L0X/VL53L0X.h"
 #include "sensors/proximity.h"
 #include "motors.h"
+#include "selector.h"
+
 //#include "follower.h"
 
 #define SCAN_SPEED MOTOR_SPEED_LIMIT*0.5
-#define SPEED_FACTOR 0.5
 
 //Thresholds
 #define SCAN_THR 150 //15?cm
 #define TARGET_THR 60 //4.0cm
 #define COLLISION_THR 40 //2.0cm
 #define PRX_NOISE_THR 100
+#define PRX_CLOSE_THR 900
+
+static bool go_right = true;
+static float speed_factor =  0.5;
 
 messagebus_t bus;
 MUTEX_DECL(bus_lock);
@@ -62,21 +67,21 @@ void motor_stop(void) {
 
 void motor_move_fw(void) {
     // move forward
-    left_motor_set_speed(MOTOR_SPEED_LIMIT*SPEED_FACTOR);
-    right_motor_set_speed(MOTOR_SPEED_LIMIT*SPEED_FACTOR);
+    left_motor_set_speed(MOTOR_SPEED_LIMIT*speed_factor);
+    right_motor_set_speed(MOTOR_SPEED_LIMIT*speed_factor);
 }
 
 void motor_move_bw(void) {
     // move backward
-    left_motor_set_speed(-MOTOR_SPEED_LIMIT*SPEED_FACTOR);
-    right_motor_set_speed(-MOTOR_SPEED_LIMIT*SPEED_FACTOR);
+    left_motor_set_speed(-MOTOR_SPEED_LIMIT*speed_factor);
+    right_motor_set_speed(-MOTOR_SPEED_LIMIT*speed_factor);
 }
 
 void motor_move(void) {
 
     uint16_t dist = find_distance();
 
-    if(dist > TARGET_THR) {
+    if(dist > TARGET_THR && dist < SCAN_THR) {
         // move forward
         motor_move_fw();
      } else if (dist < COLLISION_THR) {
@@ -113,9 +118,16 @@ void target_lost(void) {
     set_rgb_led(LED6, 10, 0, 0);
     set_rgb_led(LED8, 10, 0, 0);
 
-    // start rotating clockwise
-    left_motor_set_speed(SCAN_SPEED);
-    right_motor_set_speed(-SCAN_SPEED);
+    if (go_right) {
+        // start rotating clockwise
+        left_motor_set_speed(SCAN_SPEED);
+        right_motor_set_speed(-SCAN_SPEED);
+    } else {
+        // start rotating ant-clockwise
+        left_motor_set_speed(-SCAN_SPEED);
+        right_motor_set_speed(SCAN_SPEED);
+    }
+
 }
 
 void get_prox_readings(int *prox, unsigned int *mIdx) {
@@ -188,11 +200,24 @@ int main(void)
     int left_speed, right_speed;
     int prox[PROXIMITY_NB_CHANNELS];
     unsigned int max_idx;
+    unsigned int selector = 0;
 
     /* Infinite loop. */
     while (1) {
 
+        selector = get_selector();
+        if (selector == 0) {
+            speed_factor = 0.5;
+        } else if (selector == 1) {
+            speed_factor = 0.6;
+        } else if (selector == 2) {
+            speed_factor = 0.7;
+        } else {
+            speed_factor = 0.8;
+        }
+
         distance = find_distance();
+
         // find the target
         if (distance > SCAN_THR) {
             scan_target(distance);
@@ -222,11 +247,11 @@ int main(void)
         get_prox_readings(prox, &max_idx);
 
         // The following table shows the weights of all the proximity sensors for the resulting rotation.
-        //  Prox	0		1		2		3		4		5		6		7
-        //	w		-0.25	-0.5	-1		-1		1	    1       0.5 	0.25
+        //  Prox    0	    1	    2	    3	    4	    5	    6	    7
+        //	w	   -1	   -1	   -1	   -1	    1	    1       1 	    1
 
         // Sum the contribution of each sensor (based on the previous weights table).
-        sum_sensors = -(prox[0]>>2) - (prox[1]>>1) - prox[2] - prox[3] + prox[4] + prox[5] + (prox[6]>>1) + (prox[7]>>2);
+        sum_sensors = -(prox[0]) - (prox[1]) - prox[2] - prox[3] + prox[4] + prox[5] + (prox[6]) + (prox[7]);
 
         motor_move();
 
@@ -234,26 +259,37 @@ int main(void)
         left_speed = left_motor_get_desired_speed();
         right_speed = right_motor_get_desired_speed();
 
-        left_speed -= (sum_sensors<<1);
-        right_speed += ((sum_sensors<<1));
+        left_speed -= (sum_sensors<<2);
+        right_speed += ((sum_sensors<<2));
 
         //check bounds
-        left_speed = (left_speed < -MOTOR_SPEED_LIMIT*SPEED_FACTOR) ? -MOTOR_SPEED_LIMIT*SPEED_FACTOR : left_speed;
-        left_speed = (left_speed > MOTOR_SPEED_LIMIT*SPEED_FACTOR) ? MOTOR_SPEED_LIMIT*SPEED_FACTOR : left_speed;
+        left_speed = (left_speed < -MOTOR_SPEED_LIMIT*speed_factor) ? -MOTOR_SPEED_LIMIT*speed_factor : left_speed;
+        left_speed = (left_speed > MOTOR_SPEED_LIMIT*speed_factor) ? MOTOR_SPEED_LIMIT*speed_factor : left_speed;
 
-        right_speed = (right_speed < -MOTOR_SPEED_LIMIT*SPEED_FACTOR) ? -MOTOR_SPEED_LIMIT*SPEED_FACTOR : right_speed;
-        right_speed = (right_speed > MOTOR_SPEED_LIMIT*SPEED_FACTOR) ? MOTOR_SPEED_LIMIT*SPEED_FACTOR : right_speed;
+        right_speed = (right_speed < -MOTOR_SPEED_LIMIT*speed_factor) ? -MOTOR_SPEED_LIMIT*speed_factor : right_speed;
+        right_speed = (right_speed > MOTOR_SPEED_LIMIT*speed_factor) ? MOTOR_SPEED_LIMIT*speed_factor : right_speed;
+
+        if((prox[0] > prox[7]) || (prox[1] > prox[6])) {
+			go_right = true;
+		} else {
+			go_right = false;
+		}
 
         if(distance < SCAN_THR){
-            motor_stop();
-        }
-        else {
+            if(prox[1] > PRX_CLOSE_THR || prox[6] > PRX_CLOSE_THR || prox[0] > PRX_CLOSE_THR || prox[7] > PRX_CLOSE_THR) {
+            	motor_move_bw();
+            	chThdSleepMilliseconds(50);
+            } else {
+                motor_stop();
+            }
+        } else {
             left_motor_set_speed(left_speed);
             right_motor_set_speed(right_speed);
+            chThdSleepMilliseconds(50);
         }
 
-        str_length = sprintf(str, "distance,%d, prox,%d,%d,%d,%d,%d,%d,%d,%d, motor_speeds,%d,%d\n",distance,prox[0],prox[1],prox[2],
-                             prox[3],prox[4],prox[5],prox[6],prox[7], left_motor_get_desired_speed(), right_motor_get_desired_speed());
+        str_length = sprintf(str, "distance,%d, prox,%d,%d,%d,%d,%d,%d,%d,%d, motor_speeds,%d,%d, selector, %d\n",distance,prox[0],prox[1],prox[2],
+                             prox[3],prox[4],prox[5],prox[6],prox[7], left_motor_get_desired_speed(), right_motor_get_desired_speed(), get_selector());
         e_send_uart1_char(str, str_length);
 
         // waits 20 milliseconds
